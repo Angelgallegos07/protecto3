@@ -5,7 +5,7 @@ import './App.css';
 
 // Configuración inicial del socket
 const setupSocket = () => {
-  const socket = io('http://localhost:5000', {
+  const socket = io('http://192.168.1.6:3000', {
     reconnection: true,
     reconnectionAttempts: 5,
     reconnectionDelay: 1000,
@@ -175,9 +175,9 @@ function App() {
       square: `${String.fromCharCode(97 + from.col)}${8 - from.row}`,
       verbose: true
     });
-    
+
     return moves.map(move => ({
-      row: 8 - parseInt(move.to[1]),
+      row: 8 - parseInt(move.to[1], 10),
       col: move.to.charCodeAt(0) - 97
     }));
   }, [chessEngine]);
@@ -185,12 +185,14 @@ function App() {
   // Manejar selección de pieza
   const handleSelectPiece = useCallback((position) => {
     if (gameStatus !== 'playing' || currentPlayer !== playerColor) return;
-    
+
     const piece = board[position.row][position.col];
     if (piece && (piece === piece.toUpperCase() ? 'white' : 'black') === playerColor) {
+      const validMoves = calculateValidMoves(position);
+      console.log('Movimientos válidos:', validMoves);
       setSelectedPiece(position);
     }
-  }, [board, currentPlayer, gameStatus, playerColor]);
+  }, [board, currentPlayer, gameStatus, playerColor, calculateValidMoves]);
 
   // Efecto para el temporizador
   useEffect(() => {
@@ -236,18 +238,9 @@ function App() {
     const newSocket = setupSocket();
     setSocket(newSocket);
 
-    // Configurar listeners del socket
-    newSocket.on('connect', () => {
-      setConnectionStatus('connected');
-    });
-
-    newSocket.on('disconnect', () => {
-      setConnectionStatus('disconnected');
-    });
-
-    newSocket.on('availableGames', (games) => {
-      setAvailableGames(games);
-    });
+    newSocket.on('connect', () => setConnectionStatus('connected'));
+    newSocket.on('disconnect', () => setConnectionStatus('disconnected'));
+    newSocket.on('availableGames', setAvailableGames);
 
     newSocket.on('gameCreated', (data) => {
       setGameId(data.gameId);
@@ -266,7 +259,6 @@ function App() {
       setIsFlipped(data.playerColor === 'black');
       setWhiteTime(data.timeControls || 300);
       setBlackTime(data.timeControls || 300);
-      setGameResult(null);
       addChatMessage('Sistema', `¡Partida comenzada! Apuesta: $${data.betAmount}`);
     });
 
@@ -295,7 +287,6 @@ function App() {
       addChatMessage(message.sender, message.text);
     });
 
-    // Solicitar partidas disponibles al conectar
     newSocket.emit('requestGames');
     initializeGame();
 
@@ -322,27 +313,91 @@ function App() {
   };
 
   const createGame = () => {
-    if (balance < betAmount || !playerName.trim() || !socket) {
-      addChatMessage('Sistema', 'Nombre o apuesta inválidos');
+    if (connectionStatus !== 'connected') {
+      addChatMessage('Sistema', 'No estás conectado al servidor');
       return;
     }
-    socket.emit('createGame', { 
-      playerName, 
+
+    if (!playerName.trim()) {
+      addChatMessage('Sistema', 'Ingresa tu nombre para jugar');
+      return;
+    }
+
+    if (balance < betAmount) {
+      addChatMessage('Sistema', `Saldo insuficiente. Necesitas $${betAmount}`);
+      return;
+    }
+
+    const confirmCreate = window.confirm(`¿Crear sala con apuesta de $${betAmount}?`);
+    if (!confirmCreate) return;
+
+    socket.emit('createGame', {
+      playerName,
       betAmount,
       timeControls: 300
+    }, (response) => {
+      if (response.error) {
+        addChatMessage('Sistema', `Error: ${response.error}`);
+      } else {
+        setGameId(response.gameId);
+        setGameStatus('waiting');
+        setBalance(prev => prev - betAmount);
+        setPot(betAmount);
+        addChatMessage('Sistema', `Sala creada! Código: ${response.gameId}`);
+      }
     });
   };
 
-  const joinGame = (id) => {
-    if (balance < betAmount || !playerName.trim() || !socket) {
-      addChatMessage('Sistema', 'Nombre o apuesta inválidos');
+  const joinWithCode = () => {
+    if (!joinCode) {
+      addChatMessage('Sistema', 'Ingresa un código de sala');
       return;
     }
-    socket.emit('joinGame', { 
-      gameId: id, 
-      playerName
+    joinGame(joinCode);
+  };
+
+  const joinGame = (gameId) => {
+    if (connectionStatus !== 'connected') {
+      addChatMessage('Sistema', 'No estás conectado al servidor');
+      return;
+    }
+
+    if (!playerName.trim()) {
+      addChatMessage('Sistema', 'Ingresa tu nombre para jugar');
+      return;
+    }
+
+    const targetGame = availableGames.find(game => game.id === gameId);
+    if (!targetGame) {
+      addChatMessage('Sistema', 'Sala no encontrada');
+      return;
+    }
+
+    if (balance < targetGame.betAmount) {
+      addChatMessage('Sistema', `Necesitas $${targetGame.betAmount} para unirte`);
+      return;
+    }
+
+    if (targetGame.players.length >= 2) {
+      addChatMessage('Sistema', 'La sala ya está llena');
+      return;
+    }
+
+    socket.emit('joinGame', {
+      gameId,
+      playerName,
+      betAmount: targetGame.betAmount
+    }, (response) => {
+      if (response.error) {
+        addChatMessage('Sistema', `Error: ${response.error}`);
+      } else {
+        setGameId(gameId);
+        setBalance(prev => prev - targetGame.betAmount);
+        setPot(targetGame.betAmount * 2);
+        setShowJoinModal(false);
+        addChatMessage('Sistema', `Unido a sala de ${targetGame.creator}`);
+      }
     });
-    setShowJoinModal(false);
   };
 
   const handleMove = (move) => {
@@ -351,9 +406,7 @@ function App() {
     const fromPos = `${String.fromCharCode(97 + move.from.col)}${8 - move.from.row}`;
     const toPos = `${String.fromCharCode(97 + move.to.col)}${8 - move.to.row}`;
     
-    // Verificar si es un movimiento de promoción
-    const promotionMove = (move.piece.toLowerCase() === 'p' && 
-      (move.to.row === 0 || move.to.row === 7));
+    const promotionMove = (move.piece.toLowerCase() === 'p' && (move.to.row === 0 || move.to.row === 7));
     
     if (promotionMove) {
       setPendingPromotion({ from: move.from, to: move.to, piece: move.piece });
@@ -361,7 +414,6 @@ function App() {
       return;
     }
     
-    // Mover la pieza en el motor de ajedrez
     try {
       const chessMove = chessEngine.move({
         from: fromPos,
@@ -447,7 +499,6 @@ function App() {
     setIsFlipped(!isFlipped);
   };
 
-  // Componentes de la interfaz
   const PromotionDialog = () => (
     <div className="promotion-dialog">
       <h3>Promocionar peón a:</h3>
@@ -471,7 +522,7 @@ function App() {
   const JoinModal = () => (
     <div className="modal-overlay">
       <div className="modal">
-        <h3>Unirse a Partida</h3>
+        <h3>Unirse a Sala</h3>
         <input
           type="text"
           placeholder="Código de la sala"
@@ -479,7 +530,7 @@ function App() {
           onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
         />
         <div className="modal-buttons">
-          <button onClick={() => joinGame(joinCode)}>Unirse</button>
+          <button onClick={joinWithCode}>Unirse</button>
           <button onClick={() => setShowJoinModal(false)}>Cancelar</button>
         </div>
       </div>
@@ -510,7 +561,6 @@ function App() {
     );
   };
 
-  // Renderizado principal
   return (
     <div className="app">
       {showJoinModal && <JoinModal />}
