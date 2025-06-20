@@ -1,6 +1,6 @@
 {
   "name": "ajedrez",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "dependencies": {
     "@testing-library/dom": "^10.4.0",
@@ -8,19 +8,25 @@
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^13.5.0",
     "chess.js": "^1.4.0",
+    "chessboardjsx": "^2.4.7",
+    "cors": "^2.8.5",
+    "express": "^4.21.2",
     "react": "^19.1.0",
+    "react-chessboard": "^4.7.3",
     "react-dom": "^19.1.0",
     "react-scripts": "5.0.1",
+    "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "web-vitals": "^2.1.4"
   },
- "scripts": {
-  "start": "react-app-rewired start",
-  "build": "react-app-rewired build",
-  "test": "react-scripts test",
-  "eject": "react-scripts eject"
-
-
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "react-scripts build",
+    "test": "react-scripts test",
+    "eject": "react-scripts eject",
+    "server": "node server.js",
+    "dev": "concurrently \"npm run start\" \"npm run server\"",
+    "start-full": "npm run build && npm run server"
   },
   "eslintConfig": {
     "extends": [
@@ -41,8 +47,8 @@
     ]
   },
   "devDependencies": {
-    "@types/node": "^24.0.3",
-    "@types/react": "^19.1.8",
-    "typescript": "^5.8.3"
+    "concurrently": "^8.2.2",
+    "file-loader": "^6.2.0",
+    "url-loader": "^4.1.1"
   }
 }
